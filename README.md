@@ -1,3 +1,4 @@
+---
 
 ````markdown
 # 🧠 Backtesting Engine — Quick Start Guide
@@ -42,12 +43,12 @@ Inside the file, you can:
 
 A **strategy** is simply a Python function or code block that:
 
-1. Chooses **what to buy/sell** and **when** using the loaded DataFrame (price data).
+1. Chooses **what to buy/sell** and **when** using the loaded DataFrame (price data)
 2. Returns or prints:
 
    * The **final portfolio value**
    * The **total return (%)**
-   * And a **performance chart** over time (plotted automatically).
+   * And a **performance chart** over time (plotted automatically)
 
 ---
 
@@ -72,3 +73,6 @@ The program will:
 | ---------- | ------------------------------------------------------------------------- |
 | **Input**  | Ticker symbol(s), start/end dates, initial capital, and your custom logic |
 | **Output** | Portfolio performance table and a plotted graph of value over time        |
+
+```
+```
