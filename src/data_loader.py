@@ -1,148 +1,211 @@
-# src/data_loader.py
 """
 Data Loader Module
 ==================
 
-This module defines the `DataLoader` class, which loads and preprocesses
-historical stock data from locally stored CSV files.
+Provides a `DataLoader` class for reading cleaned historical price data
+from CSV files on disk.
 
-It performs:
-- File validation
-- Date parsing and timezone removal
-- Column normalization
-- Optional date filtering
-- Daily return computation
+It knows how to handle **two** formats:
 
-This serves as the main bridge between raw downloaded data (via Yahoo Finance)
-and the backtesting engine.
+1) Normal Yahoo Finance / yfinance-style CSV
 
-Example usage:
---------------
-    from src.data_loader import DataLoader
+    Date,Open,High,Low,Close,Adj Close,Volume
+    2015-01-02,...
 
-    loader = DataLoader(data_dir="data/raw")
-    aapl = loader.load("AAPL", start="2024-01-01", end="2024-12-31")
+2) Your custom class CSV format (what you pasted), which looks like:
 
-    print(aapl.head())
+    Price,Close,High,Low,Open,Volume
+    Ticker,AAPL,AAPL,AAPL,AAPL,AAPL
+    Date,,,,,
+    2015-01-02,24.23,24.70,23.79,24.69,212818400
+    ...
+
+The loader will automatically detect which format it is looking at and
+standardize the output to have these columns:
+
+    - date (datetime)
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - daily_return  (% change in close)
 """
 
-import pandas as pd
 from pathlib import Path
 from typing import List, Optional
+
+import pandas as pd
 
 
 class DataLoader:
     """
-    Loads and preprocesses stock data from local CSV files.
-
-    Expected CSV Format:
-    --------------------
-    Each file should contain columns like:
-        Date, Open, High, Low, Close, Volume, Dividends, Stock Splits
-
-    Typical File Location:
-        data/raw/AAPL.csv
-        data/raw/MSFT.csv
+    Load and clean historical price data for one or more tickers.
     """
 
     def __init__(self, data_dir: str = "data/raw"):
         """
-        Initialize the DataLoader with a directory containing CSV files.
-
         Parameters
         ----------
-        data_dir : str, optional
-            Path to the folder containing CSV files, by default "data/raw".
+        data_dir : str
+            Directory where CSV files live, e.g. "data/raw".
         """
         self.data_dir = Path(data_dir)
 
-    # -------------------------------------------------------------------------
-    # Load data for a single ticker
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Internal helpers for each CSV format
+    # ------------------------------------------------------------------
+    def _load_standard_format(self, path: Path) -> pd.DataFrame:
+        """
+        Load a standard yfinance-style CSV with a 'Date' column in the header.
+        """
+        df = pd.read_csv(path)
+
+        if "Date" not in df.columns:
+            raise KeyError("No 'Date' column found in standard-format loader.")
+
+        # Parse dates, drop invalid, and make timezone-naive
+        df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce").dt.tz_convert(None)
+        df = df.dropna(subset=["Date"])
+
+        # Normalize column names to lowercase for consistency
+        df.columns = df.columns.str.lower()
+
+        # Ensure sorted chronologically
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
+
+    def _load_custom_class_format(self, path: Path) -> pd.DataFrame:
+        """
+        Load your custom class CSV format that starts with:
+
+            Price,Close,High,Low,Open,Volume
+            Ticker,<ticker>,<ticker>,...
+            Date,,,,,
+            2015-01-02,24.23,...
+
+        We ignore the first two rows and use the 'Date' marker row to
+        detect where real data starts.
+        """
+        raw = pd.read_csv(path, header=None)
+
+        if raw.shape[0] < 4:
+            raise ValueError("File too short to be in custom class format.")
+
+        # Row index 2, column 0 should be 'Date'
+        header_marker = str(raw.iloc[2, 0]).strip().upper()
+        if header_marker != "DATE":
+            raise ValueError(
+                "File does not look like the custom Price/Ticker/Date format "
+                f"(marker={header_marker!r})."
+            )
+
+        # Data starts at row index 3, first 6 columns
+        data = raw.iloc[3:].copy()
+        data = data.loc[:, :5]  # keep exactly 6 columns
+
+        data.columns = [
+            "date_raw",
+            "close_raw",
+            "high_raw",
+            "low_raw",
+            "open_raw",
+            "volume_raw",
+        ]
+
+        # Drop completely empty rows
+        data = data[
+            data["date_raw"].notna()
+            & (data["date_raw"].astype(str).str.strip() != "")
+        ]
+
+        # Parse date and numeric columns
+        data["date"] = pd.to_datetime(data["date_raw"], errors="coerce")
+        for col in ["close_raw", "high_raw", "low_raw", "open_raw", "volume_raw"]:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
+
+        # Require a valid date and close
+        data = data.dropna(subset=["date", "close_raw"])
+
+        # Build final standardized DataFrame
+        df = pd.DataFrame(
+            {
+                "date": data["date"],
+                "open": data["open_raw"],
+                "high": data["high_raw"],
+                "low": data["low_raw"],
+                "close": data["close_raw"],
+                "volume": data["volume_raw"],
+            }
+        )
+
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def load(self, ticker: str, start: Optional[str] = None, end: Optional[str] = None) -> pd.DataFrame:
         """
-        Load and clean historical stock data for a single ticker.
+        Load and clean price data for a single ticker.
 
         Parameters
         ----------
         ticker : str
-            The stock symbol (e.g., "AAPL", "MSFT").
+            Symbol of the stock, e.g. "AAPL".
         start : str, optional
-            Start date (e.g., "2024-01-01") for filtering the dataset.
+            Start date for filtering (YYYY-MM-DD).
         end : str, optional
-            End date (e.g., "2024-12-31") for filtering the dataset.
+            End date for filtering (YYYY-MM-DD).
 
         Returns
         -------
         pd.DataFrame
-            A cleaned DataFrame with standardized columns:
+            DataFrame with columns:
             - date
             - open
             - high
             - low
             - close
             - volume
-            - dividends
-            - stock splits
-            - daily_return (computed % change)
+            - daily_return
         """
-        # Construct full file path (e.g., data/raw/AAPL.csv)
         path = self.data_dir / f"{ticker.upper()}.csv"
 
-        # Validate that the file exists
         if not path.exists():
             raise FileNotFoundError(f"Data file not found for {ticker} at {path}")
 
-        # --- Step 1: Read the CSV file ---
-        df = pd.read_csv(path)
+        # First try the standard yfinance-style loader
+        try:
+            df = self._load_standard_format(path)
+        except Exception:
+            # If that fails, fall back to the custom class CSV format
+            df = self._load_custom_class_format(path)
 
-        # --- Step 2: Parse dates and remove timezone info ---
-        # Ensure 'Date' column is converted to pandas datetime and timezone-neutral
-        df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce").dt.tz_convert(None)
-
-        # --- Step 3: Standardize column names to lowercase ---
-        df.columns = df.columns.str.lower()
-
-        # --- Step 4: Sort data chronologically ---
-        df = df.sort_values("date").reset_index(drop=True)
-
-        # --- Step 5: Apply optional date filters ---
+        # Apply optional date filters
         if start:
             df = df[df["date"] >= pd.Timestamp(start)]
         if end:
             df = df[df["date"] <= pd.Timestamp(end)]
 
-        # --- Step 6: Compute daily returns (% change in closing price) ---
+        df = df.sort_values("date").reset_index(drop=True)
+
+        # Compute daily return if we have close prices
         if "close" in df.columns:
             df["daily_return"] = df["close"].pct_change()
 
         return df
 
-    # -------------------------------------------------------------------------
-    # Load data for multiple tickers at once
-    # -------------------------------------------------------------------------
     def load_many(self, tickers: List[str], start: Optional[str] = None, end: Optional[str] = None) -> dict:
         """
-        Load multiple tickers at once into a dictionary.
-
-        Parameters
-        ----------
-        tickers : List[str]
-            List of stock symbols (e.g., ["AAPL", "MSFT", "GOOGL"]).
-        start : str, optional
-            Start date filter.
-        end : str, optional
-            End date filter.
+        Load data for multiple tickers at once.
 
         Returns
         -------
         dict
-            Dictionary of {ticker: DataFrame} pairs.
+            Mapping from ticker symbol -> cleaned DataFrame.
         """
-        results = {}
-        for ticker in tickers:
-            try:
-                results[ticker.upper()] = self.load(ticker, start, end)
-            except FileNotFoundError:
-                print(f"⚠️  File for {ticker} not found — skipping.")
-        return results
+        out = {}
+        for t in tickers:
+            out[t] = self.load(t, start=start, end=end)
+        return out
