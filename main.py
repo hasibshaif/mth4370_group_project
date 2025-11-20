@@ -37,7 +37,6 @@ except ImportError:  # pragma: no cover
     from backtester import Backtester
 
 
-# ----------------------------------------------------------------------
 # Strategy configuration
 # ----------------------------------------------------------------------
 STRATEGY_CONFIG = {
@@ -46,6 +45,9 @@ STRATEGY_CONFIG = {
     "holding_period_days": 14,      # calendar days
     "initial_capital": 10_000.0,    # dollars
 }
+
+# Tickers to compare on the same buy/sell dates
+COMPARISON_TICKERS = ["TSLA", "AAPL", "MSFT", "GOOGL"]
 
 
 def main() -> None:
@@ -62,34 +64,43 @@ def main() -> None:
     sell_date = buy_date + timedelta(days=holding_period_days)
     sell_date_str = sell_date.strftime("%Y-%m-%d")
 
-    print(f"  Ticker:              {ticker}")
+    print(f"  Primary ticker:      {ticker}")
     print(f"  Buy date (request):  {buy_date_str}")
     print(f"  Sell date (request): {sell_date_str}")
     print(f"  Holding period:      {holding_period_days} days")
     print(f"  Initial capital:     {initial_capital:.2f}")
+    print("  Comparison tickers:  " + ", ".join(COMPARISON_TICKERS))
 
     # Initialize loader and backtester
     # Make sure your CSVs live under `data/raw/{TICKER}.csv`
     loader = DataLoader(data_dir="data/raw")
     backtester = Backtester(loader)
 
-    # Run the Buy & Hold simulation
-    df = backtester.run_buy_and_hold(
-        ticker=ticker,
-        start=buy_date_str,
-        end=sell_date_str,
-        initial_capital=initial_capital,
-    )
+    # Run the Buy & Hold simulation for each comparison ticker
+    results_by_ticker: dict[str, pd.DataFrame] = {}
 
-    # Extract summary stats
-    buy_price = df["price"].iloc[0]
-    sell_price = df["price"].iloc[-1]
-    shares = df["shares"].iloc[0]
-    final_value = df["portfolio_value"].iloc[-1]
+    for comp_ticker in COMPARISON_TICKERS:
+        print(f"\n[main] Running Buy & Hold for {comp_ticker}...")
+        df_comp = backtester.run_buy_and_hold(
+            ticker=comp_ticker,
+            start=buy_date_str,
+            end=sell_date_str,
+            initial_capital=initial_capital,
+        )
+        results_by_ticker[comp_ticker] = df_comp
+
+    # Use the primary ticker's DataFrame for the text summary
+    df_main = results_by_ticker[ticker]
+
+    # Extract summary stats for the primary ticker
+    buy_price = df_main["price"].iloc[0]
+    sell_price = df_main["price"].iloc[-1]
+    shares = df_main["shares"].iloc[0]
+    final_value = df_main["portfolio_value"].iloc[-1]
     pnl = final_value - initial_capital
     ret_pct = pnl / initial_capital
 
-    print("\n=== Single-Trade Backtest Summary ===")
+    print("\n=== Single-Trade Backtest Summary (Primary Ticker) ===")
     print(f"Ticker:           {ticker}")
     print(f"Buy date:         {buy_date_str} @ {buy_price:.2f}")
     print(f"Sell date:        {sell_date_str} @ {sell_price:.2f}")
@@ -99,10 +110,11 @@ def main() -> None:
     print(f"PnL:              {pnl:.2f}")
     print(f"Return:           {ret_pct*100:.2f}%")
 
-    # Plot the equity curve
-    backtester.plot_results(df, ticker)
+    # Plot comparison of all tickers on the same chart
+    backtester.plot_comparison(results_by_ticker)
 
     print("[main] Backtest complete.")
+
 
 
 if __name__ == "__main__":

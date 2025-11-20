@@ -1,12 +1,12 @@
-
+````markdown
 ## Project Structure
 
 ```text
 .
-├── main.py                  # Entry point: runs a single-trade buy & hold backtest
+├── main.py                  # Entry point: runs buy & hold backtests (and comparison plot)
 ├── test_data.py             # Helper script to download/update CSV data via yfinance
 ├── src/
-│   ├── backtester.py        # Backtester class: executes the buy & hold simulation
+│   ├── backtester.py        # Backtester class: executes the buy & hold simulations + plots
 │   ├── data_loader.py       # DataLoader: reads & normalizes CSV price data
 │   └── data_acquisition.py  # (Optional) YahooFinanceDataFetcher utilities
 └── data/
@@ -65,7 +65,7 @@ data/raw/TSLA.csv
 
 ## How the Data Loader Works
 
-`src/data_loader.py` handles all the quirks of the CSV files:
+`src/data_loader.py` handles the quirks of the CSV files:
 
 * Reads each CSV **once** and caches it in memory (for speed).
 * Detects whether the first row is a header.
@@ -82,7 +82,12 @@ For files with columns like:
 Price, Close, High, Low, Open, Volume
 ```
 
-the loader treats the first column as the date column (renames it to `date`) and uses `close` as the price.
+the loader:
+
+* Treats the first column as the date column (renames it to `date`), and
+* Uses `close` as the price series.
+
+If needed, it falls back to other columns (like `adj close` or `price`) to create a consistent `close` field.
 
 ---
 
@@ -100,48 +105,95 @@ This will:
 
    ```text
    [main] Starting single-trade backtest using Backtester...
-     Ticker:              TSLA
+     Primary ticker:      TSLA
      Buy date (request):  2023-01-03
      Sell date (request): 2023-01-17
      Holding period:      14 days
      Initial capital:     10000.00
+     Comparison tickers:  TSLA, AAPL, MSFT, GOOGL
    ```
 
-2. Use `DataLoader` to load the chosen ticker’s historical prices from `data/raw/`.
+2. Use `DataLoader` to load each chosen ticker’s historical prices from `data/raw/`.
 
-3. Use `Backtester` to simulate a **buy & hold** strategy:
+3. Use `Backtester` to simulate a **buy & hold** strategy for each ticker:
 
    * Buy as many whole shares as possible on the first trading day **on or after** the requested buy date.
    * Hold these shares until the requested sell date / holding period.
    * Keep leftover cash uninvested.
 
-4. Compute and store:
+4. For each ticker, compute and store:
 
    * `shares` held over time
    * `cash` balance
    * `price` (from the `close` column)
    * `portfolio_value = shares * price + cash`
-   * `returns_factor = portfolio_value / initial_capital`
+   * `returns_factor = portfolio_value / initial_capital` (normalized equity curve)
 
-5. Print a basic performance summary and plot the **equity curve** over time.
+5. Compute a **performance summary** (per ticker), including for example:
+
+   * Final portfolio value
+   * Total return
+   * Approximate annualized return
+   * Approximate annualized volatility of daily returns
+   * Max drawdown
+   * Max drawdown duration (in days)
+
+6. Print a detailed summary in the terminal for the **primary ticker** (e.g. TSLA), and basic stats for each ticker as the backtests run.
+
+---
+
+## Multi-Ticker Comparison Plot
+
+By default, `main.py` defines:
+
+```python
+STRATEGY_CONFIG = {
+    "ticker": "TSLA",
+    "buy_date": "2023-01-03",
+    "holding_period_days": 14,
+    "initial_capital": 10_000.0,
+}
+
+COMPARISON_TICKERS = ["TSLA", "AAPL", "MSFT", "GOOGL"]
+```
+
+When you run:
+
+```bash
+python main.py
+```
+
+the engine will:
+
+1. Run the same buy & hold trade (same buy and sell dates, same initial capital) **for each ticker** listed in `COMPARISON_TICKERS`.
+2. Store the results for each ticker in a dictionary.
+3. Call `Backtester.plot_comparison(...)` to plot **all normalized equity curves on the same chart**, so you can visually compare which stock performed better over that period.
+
+Each curve starts at 1.0 on the buy date (via `returns_factor`), making the relative performance easy to see.
 
 ---
 
 ## Customizing the Strategy Configuration
 
-Inside `main.py`, there is a configuration section that defines the trade:
+Inside `main.py`, there is a configuration section that defines the trade and which tickers to compare:
 
-* **ticker** (e.g. `"TSLA"`)
+* **ticker** (e.g. `"TSLA"`) – the primary ticker for the printed summary
 * **buy_date** (e.g. `"2023-01-03"`)
 * **holding_period_days** (e.g. `14`)
 * **initial_capital** (e.g. `10000.0`)
+* **COMPARISON_TICKERS** (e.g. `["TSLA", "AAPL", "MSFT", "GOOGL"]`)
 
 To run a different scenario:
 
 1. Open `main.py`.
-2. Locate the section where these values are set (near the top of `main()`).
-3. Change the values to match the ticker and dates you want to test.
-4. Make sure you have a corresponding CSV in `data/raw/` (e.g. `data/raw/TSLA.csv`).
+2. Locate `STRATEGY_CONFIG` and `COMPARISON_TICKERS`.
+3. Change the values to match:
+
+   * the primary ticker,
+   * the buy date,
+   * the holding period,
+   * the tickers you want to compare.
+4. Make sure you have corresponding CSVs in `data/raw/` (e.g. `data/raw/NVDA.csv` if you add `"NVDA"`).
 5. Run:
 
    ```bash
@@ -152,14 +204,18 @@ To run a different scenario:
 
 ## Notes & Limitations
 
-* This engine is **single-asset, single-trade**:
+* This engine is **per-ticker, single-trade**:
 
-  * No multiple overlapping trades.
-  * No portfolio of many tickers at once.
+  * For each ticker, it simulates one buy & hold trade over the chosen date range.
+  * It does **not** yet model multiple overlapping trades or complex strategies.
+* The multi-ticker comparison:
+
+  * Treats each ticker separately with its own $X initial capital.
+  * The comparison chart is **not** a multi-asset portfolio; it is a side-by-side comparison of separate trades.
 * Execution assumptions are very simple:
 
   * No transaction costs, slippage, or bid/ask spread modeling.
-  * Filled at the daily close price.
+  * Orders are filled at the daily close price.
 * It is intended for **teaching and experimentation**, not for production trading.
 
 ---
