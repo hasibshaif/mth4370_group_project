@@ -1,0 +1,505 @@
+.app-container {
+  width: 100%;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.app-header {
+  background: white;
+  border-radius: 12px;
+  padding: 24px 32px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.app-header h1 {
+  font-size: 2em;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.api-status {
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.api-status.connected {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.api-status.disconnected {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+/* Configuration Panel */
+.config-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.config-panel h2 {
+  font-size: 1.5em;
+  margin-bottom: 24px;
+  color: #1a1a1a;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 12px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #424242;
+  font-size: 0.95em;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 1em;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #646cff;
+}
+
+.form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.9em;
+  font-family: 'Monaco', 'Courier New', monospace;
+  resize: vertical;
+  min-height: 120px;
+  transition: border-color 0.2s;
+}
+
+.form-group textarea:focus {
+  outline: none;
+  border-color: #646cff;
+}
+
+.helper-text {
+  font-size: 0.85em;
+  color: #757575;
+  margin: 4px 0 8px 0;
+}
+
+.helper-text code {
+  font-family: 'Monaco', 'Courier New', monospace;
+  background: #f5f5f5;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.run-button {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 1.1em;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  margin-top: 24px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.run-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.run-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.error-message {
+  margin-top: 16px;
+  padding: 12px;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 8px;
+  border-left: 4px solid #c62828;
+  font-size: 0.9em;
+}
+
+/* Results Panel */
+.results-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  min-height: 500px;
+}
+
+.empty-state,
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  text-align: center;
+  color: #757575;
+}
+
+.empty-state h3 {
+  font-size: 1.5em;
+  margin-bottom: 12px;
+  color: #424242;
+}
+
+.loading-state {
+  gap: 16px;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e0e0e0;
+  border-top-color: #646cff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Metrics Grid */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.metric-card {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.metric-card.highlight {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.metric-card.highlight.negative {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.metric-label {
+  font-size: 0.9em;
+  font-weight: 500;
+  margin-bottom: 8px;
+  opacity: 0.8;
+}
+
+.metric-card.highlight .metric-label {
+  opacity: 0.9;
+}
+
+.metric-value {
+  font-size: 1.8em;
+  font-weight: 700;
+}
+
+.metric-value.positive {
+  color: #2e7d32;
+}
+
+.metric-value.negative {
+  color: #c62828;
+}
+
+.metric-card.highlight .metric-value {
+  color: white;
+}
+
+.metric-card.highlight .metric-value.positive,
+.metric-card.highlight .metric-value.negative {
+  color: white;
+}
+
+/* Chart Container */
+.chart-container {
+  margin-top: 32px;
+}
+
+.chart-container h3 {
+  font-size: 1.3em;
+  margin-bottom: 20px;
+  color: #1a1a1a;
+}
+
+/* Plot Image Container for Backend Matplotlib Images */
+.plot-image-container {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.plot-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .config-panel {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    padding: 12px;
+  }
+
+  .app-header {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .app-header h1 {
+    font-size: 1.5em;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Scrollbar Styling */
+.config-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.config-panel::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+.config-panel::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 10px;
+}
+
+.config-panel::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Mode Toggle */
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mode-toggle .mode-button {
+  padding: 10px;
+  background: #f5f5f5;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+
+.mode-toggle .mode-button:hover {
+  background: #eeeeee;
+  border-color: #646cff;
+}
+
+.mode-toggle .mode-button.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: #667eea;
+}
+
+/* Ticker Chips for Comparison Mode */
+.ticker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ticker-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.chip-remove {
+  background: rgba(255, 255, 255, 0.3);
+  border: none;
+  color: white;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2em;
+  line-height: 1;
+  transition: background 0.2s;
+}
+
+.chip-remove:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.ticker-select-add {
+  padding: 6px 12px;
+  border: 2px dashed #e0e0e0;
+  border-radius: 20px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: border-color 0.2s;
+}
+
+.ticker-select-add:hover {
+  border-color: #646cff;
+}
+
+/* Comparison Metrics Table */
+.comparison-metrics {
+  margin-bottom: 32px;
+}
+
+.comparison-metrics h3 {
+  font-size: 1.3em;
+  margin-bottom: 16px;
+  color: #1a1a1a;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.metrics-table thead {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.metrics-table th {
+  padding: 12px 16px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.metrics-table tbody tr {
+  border-bottom: 1px solid #e0e0e0;
+  transition: background 0.2s;
+}
+
+.metrics-table tbody tr:hover {
+  background: #f5f5f5;
+}
+
+.metrics-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.metrics-table td {
+  padding: 12px 16px;
+  font-size: 0.9em;
+}
+
+.metrics-table .positive {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.metrics-table .negative {
+  color: #c62828;
+  font-weight: 600;
+}
+
+.metrics-table .error-cell {
+  color: #c62828;
+  font-style: italic;
+}

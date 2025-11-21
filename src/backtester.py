@@ -19,6 +19,13 @@ The backtester:
 """
 
 import math
+import io
+import base64
+
+# Set matplotlib to use non-interactive backend before importing pyplot
+# This prevents GUI-related errors when running in Flask/server context
+import matplotlib
+matplotlib.use('Agg')  # Use Anti-Grain Geometry backend (non-interactive)
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -246,6 +253,55 @@ class Backtester:
         plt.tight_layout()
         plt.show()
     
+    def plot_results_to_base64(self, df: pd.DataFrame, ticker: str) -> str:
+        """
+        Plot portfolio value over time, with buy/sell markers, and return as base64 PNG.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame returned by `run_buy_and_hold`.
+        ticker : str
+            Symbol being plotted (used for the title/legend).
+        
+        Returns
+        -------
+        str
+            Base64-encoded PNG image string (ready for <img src="data:image/png;base64,...">).
+        """
+        if df.empty:
+            raise ValueError("Cannot plot results: DataFrame is empty.")
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+        # Equity curve
+        ax.plot(df["date"], df["portfolio_value"], label=f"{ticker} equity curve", linewidth=2)
+
+        # Mark entry and exit
+        buy_date = df["date"].iloc[0]
+        sell_date = df["date"].iloc[-1]
+        buy_value = df["portfolio_value"].iloc[0]
+        sell_value = df["portfolio_value"].iloc[-1]
+
+        ax.scatter([buy_date], [buy_value], marker="^", s=80, label="Buy", color="green")
+        ax.scatter([sell_date], [sell_value], marker="v", s=80, label="Sell", color="red")
+
+        ax.set_title(f"Buy & Hold Strategy for {ticker}")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Portfolio Value")
+        ax.legend()
+        ax.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        
+        # Convert to base64
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+        
+        return img_base64
+    
     def plot_comparison(self, results_by_ticker: dict[str, pd.DataFrame]) -> None:
         """Plot normalized equity curves for several tickers on the same figure.
 
@@ -285,6 +341,59 @@ class Backtester:
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.show()
+    
+    def plot_comparison_to_base64(self, results_by_ticker: dict[str, pd.DataFrame]) -> str:
+        """Plot normalized equity curves for several tickers on the same figure, and return as base64 PNG.
+
+        Parameters
+        ----------
+        results_by_ticker : dict[str, pd.DataFrame]
+            Mapping from ticker symbol to the DataFrame returned by
+            `run_buy_and_hold` for that ticker.
+        
+        Returns
+        -------
+        str
+            Base64-encoded PNG image string (ready for <img src="data:image/png;base64,...">).
+        """
+        if not results_by_ticker:
+            raise ValueError("No results to plot in plot_comparison().")
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        for ticker, df in results_by_ticker.items():
+            if df.empty:
+                continue
+
+            # X-axis: use the date column if present, otherwise the index
+            x = df["date"] if "date" in df.columns else df.index
+            y = df["returns_factor"]  # normalized so all start at 1.0
+
+            ax.plot(x, y, label=ticker, linewidth=2)
+
+        # Use the first ticker's dates for buy/sell vertical markers (optional)
+        first_df = next(iter(results_by_ticker.values()))
+        if "date" in first_df.columns:
+            buy_date = first_df["date"].iloc[0]
+            sell_date = first_df["date"].iloc[-1]
+            ax.axvline(buy_date, linestyle="--", alpha=0.3, color="gray")
+            ax.axvline(sell_date, linestyle="--", alpha=0.3, color="gray")
+
+        ax.set_title("Buy & Hold Comparison Across Tickers")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Portfolio value (normalized to 1.0)")
+        ax.legend()
+        ax.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        
+        # Convert to base64
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+        
+        return img_base64
 
 
     # ------------------------------------------------------------------
