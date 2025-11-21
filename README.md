@@ -39,6 +39,8 @@ Install them with:
 pip install -r requirements.txt
 ```
 
+**Note:** If `pip` doesn't work, try `pip3` instead.
+
 Or install manually:
 
 ```bash
@@ -64,6 +66,8 @@ From the project root directory (`mth4370_group_project`):
 ```bash
 python api_server.py
 ```
+
+**Note:** If `python` doesn't work, try `python3` instead.
 
 The server will start on `http://localhost:5001` and you should see:
 
