@@ -99,7 +99,6 @@ class PriceStore:
         if end is not None:
             query += " AND ts <= ?"
             params.append(end)
-
         query += " ORDER BY ts ASC"
 
         df = pd.read_sql(query, self.conn, params=params, parse_dates=["date"])
