@@ -27,6 +27,7 @@ What this does (end-to-end):
 
 from datetime import datetime, timedelta
 import traceback
+import pandas as pd
 
 # Flexible imports so it works whether modules live in `src/` or alongside main.py
 try:  # pragma: no cover - import flexibility helper
@@ -114,7 +115,6 @@ def main() -> None:
     backtester.plot_comparison(results_by_ticker)
 
     print("[main] Backtest complete.")
-
 
 
 if __name__ == "__main__":
