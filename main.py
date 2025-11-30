@@ -9,7 +9,7 @@ What this does (end-to-end):
    - holding_period_days
    - initial_capital
 
-2. Use `DataLoader` to read historical prices for that ticker from CSV.
+2. Use `DataLoader` to read historical prices for that ticker from the DB.
 
 3. Use `Backtester` to run a Buy & Hold strategy:
    - Buy on the first trading day >= buy_date
@@ -22,11 +22,13 @@ What this does (end-to-end):
    - PnL
    - return %
 
-5. Plot the equity curve with buy/sell markers.
+5. Plot the equity curve with buy/sell markers and compare multiple tickers.
 """
 
 from datetime import datetime, timedelta
 import traceback
+import pandas as pd  # <-- needed for type hints (pd.DataFrame)
+
 
 # Flexible imports so it works whether modules live in `src/` or alongside main.py
 try:  # pragma: no cover - import flexibility helper
@@ -47,7 +49,8 @@ STRATEGY_CONFIG = {
 }
 
 # Tickers to compare on the same buy/sell dates
-COMPARISON_TICKERS = ["TSLA", "AAPL", "MSFT", "GOOGL"]
+COMPARISON_TICKERS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA", "JPM", "V", "DIS", "NFLX", "PYPL", "ADBE", "INTC", "CSCO", "CMCSA", "PEP", "COST", "TM", "NKE", "SBUX", "BA", "WMT", "T", "XOM", "CVX"]
+
 
 
 def main() -> None:
@@ -71,10 +74,9 @@ def main() -> None:
     print(f"  Initial capital:     {initial_capital:.2f}")
     print("  Comparison tickers:  " + ", ".join(COMPARISON_TICKERS))
 
-    # Initialize loader and backtester
-    # Make sure your CSVs live under `data/raw/{TICKER}.csv`
-    loader = DataLoader(data_dir="data/raw")
-    backtester = Backtester(loader)
+    # Initialize DataLoader (now backed by SQLite DB) and Backtester
+    data_loader = DataLoader(db_path="data/prices.db")
+    backtester = Backtester(data_loader=data_loader)
 
     # Run the Buy & Hold simulation for each comparison ticker
     results_by_ticker: dict[str, pd.DataFrame] = {}
@@ -114,7 +116,6 @@ def main() -> None:
     backtester.plot_comparison(results_by_ticker)
 
     print("[main] Backtest complete.")
-
 
 
 if __name__ == "__main__":

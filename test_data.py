@@ -1,73 +1,57 @@
-from pathlib import Path
+# test_data.py
+from __future__ import annotations
+
+from datetime import date
+from typing import List
 
 import yfinance as yf
 
-# Core tickers we always keep up to date
-CORE_TICKERS = ["AAPL", "MSFT", "GOOGL", "TSLA"]
+from src.db_store import PriceStore
 
 
-def ask_for_extra_tickers() -> list[str]:
-    """
-    Ask the user if they want to download/update extra tickers.
-    Returns a list of extra tickers (uppercase), possibly empty.
-    """
-    print("Core tickers that will be updated:", ", ".join(CORE_TICKERS))
-    raw = input(
-        "Enter any EXTRA tickers to download/update (comma-separated), "
-        "or just press Enter to skip: "
-    ).strip()
-
-    if not raw:
-        return []
-
-    # Split by comma, strip spaces, uppercase, and remove empties
-    extras = [t.strip().upper() for t in raw.split(",")]
-    extras = [t for t in extras if t]  # remove empty strings
-
-    # Remove any that are already in core list
-    extras = [t for t in extras if t not in CORE_TICKERS]
-
-    return extras
+DEFAULT_TICKERS: List[str] = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA", "JPM", "V", "DIS", "NFLX", "PYPL", "ADBE", "INTC", "CSCO", "CMCSA", "PEP", "COST", "TM", "NKE", "SBUX", "BA", "WMT", "T", "XOM", "CVX"]
+DEFAULT_START = "2018-01-01"
+DEFAULT_END = date.today().isoformat()
 
 
-def download_and_save_ticker(ticker: str, data_dir: Path, start_date: str = "2015-01-01"):
-    """
-    Download daily data for a single ticker from yfinance and save to CSV.
-    Always overwrites the existing file so data stays fresh.
-    """
-    out_path = data_dir / f"{ticker}.csv"
-    print(f"\nDownloading {ticker} data starting from {start_date}...")
+def fetch_and_store(
+    tickers: list[str],
+    start: str = DEFAULT_START,
+    end: str = DEFAULT_END,
+    interval: str = "1d",
+) -> None:
+    store = PriceStore("data/prices.db")
 
-    data = yf.download(ticker, start=start_date)
+    for symbol in tickers:
+        symbol = symbol.upper().strip()
+        if not symbol:
+            continue
+        print(f"[test_data] Downloading {symbol} from Yahoo: {start} → {end} ({interval})")
+        df = yf.download(
+        symbol,
+        start=start,
+        end=end,
+        interval=interval,
+        group_by="column",   # avoid MultiIndex with ticker level
+        auto_adjust=False,   # explicit; avoids the future default confusion
+        )
 
-    if data.empty:
-        print(f"  ⚠ No data returned for {ticker}. Skipping.")
-        return
 
-    data.to_csv(out_path)
-    print(f"  ✅ Saved {ticker} data to {out_path}")
+        print(f"[test_data] Rows for {symbol}: {len(df)}")
+        store.insert_from_dataframe(symbol, df)
+
+    print("[test_data] Done. Data stored in data/prices.db")
 
 
-def main():
-    data_dir = Path("data/raw")
-    data_dir.mkdir(parents=True, exist_ok=True)
+def main() -> None:
+    print("Default tickers:", ", ".join(DEFAULT_TICKERS))
+    extra = input("Enter extra tickers (comma-separated) or leave blank: ").strip()
+    tickers = DEFAULT_TICKERS.copy()
+    if extra:
+        tickers.extend([t.strip().upper() for t in extra.split(",") if t.strip()])
 
-    # 1) Ask user for extra tickers
-    extra_tickers = ask_for_extra_tickers()
-
-    # 2) Build full list (core + extras)
-    all_tickers = CORE_TICKERS + extra_tickers
-
-    print("\nTickers that will be updated:")
-    for t in all_tickers:
-        print(" -", t)
-
-    # 3) Download/update each ticker
-    for ticker in all_tickers:
-        try:
-            download_and_save_ticker(ticker, data_dir)
-        except Exception as e:
-            print(f"  ❌ Error while downloading {ticker}: {e}")
+    # You can later make these inputs as well if you want
+    fetch_and_store(tickers)
 
 
 if __name__ == "__main__":
