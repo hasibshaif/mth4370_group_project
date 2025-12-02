@@ -8,22 +8,24 @@ What this does (end-to-end):
    - buy_date
    - holding_period_days
    - initial_capital
-   - transaction_cost_pct (NEW: round-trip cost on initial capital)
+   - transaction_cost_pct
+   - strategy ("buy_and_hold" or "ma_crossover")
 
 2. Use `DataLoader` to read historical prices for that ticker from the DB.
 
-3. Use `Backtester` to run a Buy & Hold strategy:
-   - Buy on the first trading day >= buy_date
-   - Hold until (buy_date + holding_period_days)
-   - Use integer shares and leave leftover cash uninvested.
+3. Use `Backtester` to run the chosen strategy:
+   - Buy & Hold
+   - or Moving Average Crossover
 
-4. Print a summary:
+4. Print a summary for the primary ticker:
    - entry/exit prices
    - shares
    - PnL
    - return %
 
-5. Plot the equity curve with buy/sell markers and compare multiple tickers.
+5. Print a performance table for all tickers and plot:
+   - risk–return scatter
+   - normalized equity curves comparison.
 """
 
 from datetime import datetime, timedelta
@@ -52,23 +54,19 @@ STRATEGY_CONFIG = {
     # (for Buy & Hold) or per-trade fee (for MA crossover).
     "transaction_cost_pct": 0.001,
 
-    # NEW: which strategy to run: "buy_and_hold" or "ma_crossover"
+    # Which strategy to run: "buy_and_hold" or "ma_crossover"
     "strategy": "buy_and_hold",
 
-    # NEW: parameters for the moving average crossover strategy
+    # Parameters for the moving average crossover strategy
     "short_window": 20,
     "long_window": 50,
 }
 
 
 # Tickers to compare on the same buy/sell dates
-# COMPARISON_TICKERS = [
-#     "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA", "JPM", "V", "DIS",
-#     "NFLX", "PYPL", "ADBE", "INTC", "CSCO", "CMCSA", "PEP", "COST", "TM",
-#     "NKE", "SBUX", "BA", "WMT", "T", "XOM", "CVX"
-# ]
 COMPARISON_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN"]
+    "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN"
+]
 
 
 def main() -> None:
@@ -81,11 +79,10 @@ def main() -> None:
     initial_capital = cfg["initial_capital"]
     transaction_cost_pct = cfg.get("transaction_cost_pct", 0.0)
 
-    # NEW: strategy + MA windows
+    # Strategy + MA windows
     strategy = cfg.get("strategy", "buy_and_hold")
     short_window = cfg.get("short_window", 20)
     long_window = cfg.get("long_window", 50)
-
 
     # Compute sell date in calendar days
     buy_date = datetime.strptime(buy_date_str, "%Y-%m-%d")
@@ -103,12 +100,11 @@ def main() -> None:
         print(f"  MA windows:          short={short_window}, long={long_window}")
     print("  Comparison tickers:  " + ", ".join(COMPARISON_TICKERS))
 
-
     # Initialize DataLoader (now backed by SQLite DB) and Backtester
     data_loader = DataLoader(db_path="data/prices.db")
     backtester = Backtester(data_loader=data_loader)
 
-    # Run the Buy & Hold simulation for each comparison ticker
+    # Run the chosen strategy for each comparison ticker
     results_by_ticker: dict[str, pd.DataFrame] = {}
 
     for comp_ticker in COMPARISON_TICKERS:
@@ -137,9 +133,9 @@ def main() -> None:
 
         results_by_ticker[comp_ticker] = df_comp
 
-
-    # Use the primary ticker's DataFrame for the text summary
-        # Use the primary ticker's DataFrame for the text summary
+    # ------------------------------------------------------------------
+    # Primary ticker summary
+    # ------------------------------------------------------------------
     df_main = results_by_ticker[ticker]
 
     # Extract summary stats for the primary ticker
@@ -152,14 +148,15 @@ def main() -> None:
 
     print("\n=== Single-Trade Backtest Summary (Primary Ticker) ===")
     print(f"Ticker:           {ticker}")
+    print(f"Strategy:         {strategy}")
     print(f"Buy date:         {buy_date_str} @ {buy_price:.2f}")
     print(f"Sell date:        {sell_date_str} @ {sell_price:.2f}")
-    print(f"Shares (integerrun_buy_and_hold(): {shares}")
+    print(f"Shares (integer): {shares}")
     print(f"Initial capital:  {initial_capital:.2f}")
-    print(f"Transaction cost: {transaction_cost_pct * 100:.3f}% (round-trip)")
+    print(f"Transaction cost: {transaction_cost_pct * 100:.3f}%")
     print(f"Final value:      {final_value:.2f}")
     print(f"PnL:              {pnl:.2f}")
-    print(f"Return:           {ret_pct*100:.2f}%")
+    print(f"Return:           {ret_pct * 100:.2f}%")
 
     # ------------------------------------------------------------------
     # Performance summary table across all tickers (terminal only)
@@ -173,32 +170,38 @@ def main() -> None:
 
     summary_df = pd.DataFrame(summary_rows).set_index("ticker")
 
+    # Add a simple Sharpe-like metric (return / vol)
+    summary_df["sharpe_like"] = (
+        summary_df["annualized_return"] / summary_df["annualized_vol"]
+    )
+
     # Reorder columns for nicer display
     cols = [
         "final_value",
         "total_return",
         "annualized_return",
         "annualized_vol",
+        "sharpe_like",
         "max_drawdown",
         "max_drawdown_duration_days",
     ]
     summary_df = summary_df[cols]
 
+    # Sort by Sharpe-like metric (highest first)
+    summary_df = summary_df.sort_values(by="sharpe_like", ascending=False)
+
     # Print a clean table to the terminal
-    print("\n=== Performance Summary Across Tickers ===")
-    # Format % columns as percents, others as numbers
+    print("\n=== Performance Summary Across Tickers (sorted by Sharpe-like) ===")
+
     def fmt(x: float) -> str:
         return f"{x:,.4f}"
 
     print(summary_df.to_string(float_format=fmt))
 
-    # Plot comparison of all tickers on the same chart
-    backtester.plot_comparison(results_by_ticker)
+    # Combined overview: top = risk–return, bottom = equity curves
+    backtester.plot_overview(results_by_ticker, summary_df)
 
     print("\n[main] Backtest complete.")
-
-
-
 
 
 

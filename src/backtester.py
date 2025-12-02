@@ -5,14 +5,15 @@ Backtester Module
 Provides a `Backtester` class that uses a `DataLoader` to simulate
 simple trading strategies.
 
-Right now we implement a **single** strategy:
+Implemented strategies:
 
     - Buy & Hold between two calendar dates.
+    - Moving Average Crossover (long-only).
 
 The backtester:
 
 - Uses integer shares (no fractional shares).
-- Invests as much of the initial capital as possible at the entry date
+- Invests as much of the capital as possible at the entry date
   (optionally net of transaction costs).
 - Keeps leftover cash in the portfolio (uninvested).
 - Tracks portfolio value over time.
@@ -103,8 +104,6 @@ class Backtester:
         df["price"] = df["close"]
 
         # Capital after applying round-trip transaction costs
-        # We treat transaction_cost_pct as a one-shot cost on initial_capital
-        # so all subsequent PnL is net of fees.
         effective_capital = initial_capital * (1.0 - transaction_cost_pct)
 
         # Entry is at the first row
@@ -145,7 +144,7 @@ class Backtester:
         )
 
         return df
-    
+
     def run_ma_crossover(
         self,
         ticker: str,
@@ -285,28 +284,29 @@ class Backtester:
 
         return df
 
-
     # ------------------------------------------------------------------
     # Visualization
     # ------------------------------------------------------------------
     def plot_results(self, df: pd.DataFrame, ticker: str) -> None:
         """
-        Plot portfolio value over time, with buy/sell markers.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            DataFrame returned by `run_buy_and_hold`.
-        ticker : str
-            Symbol being plotted (used for the title/legend).
+        Plot portfolio value over time with buy/sell markers
+        and a drawdown subplot.
         """
         if df.empty:
             raise ValueError("Cannot plot results: DataFrame is empty.")
 
-        plt.figure(figsize=(10, 5))
+        # Compute drawdown series
+        cum_max = df["portfolio_value"].cummax()
+        drawdown = df["portfolio_value"] / cum_max - 1.0
 
-        # Equity curve
-        plt.plot(df["date"], df["portfolio_value"], label=f"{ticker} equity curve", linewidth=2)
+        fig, (ax_equity, ax_dd) = plt.subplots(
+            2, 1, figsize=(10, 7), sharex=True,
+            gridspec_kw={"height_ratios": [3, 1]}
+        )
+
+        # --- Top: equity curve ---
+        ax_equity.plot(df["date"], df["portfolio_value"],
+                       label=f"{ticker} equity curve", linewidth=2)
 
         # Mark entry and exit
         buy_date = df["date"].iloc[0]
@@ -314,55 +314,23 @@ class Backtester:
         buy_value = df["portfolio_value"].iloc[0]
         sell_value = df["portfolio_value"].iloc[-1]
 
-        plt.scatter([buy_date], [buy_value], marker="^", s=80, label="Buy")
-        plt.scatter([sell_date], [sell_value], marker="v", s=80, label="Sell")
+        ax_equity.scatter([buy_date], [buy_value], marker="^", s=80, label="Buy")
+        ax_equity.scatter([sell_date], [sell_value], marker="v", s=80, label="Sell")
 
-        plt.title(f"Buy & Hold Strategy for {ticker}")
-        plt.xlabel("Date")
-        plt.ylabel("Portfolio Value")
-        plt.legend()
-        plt.grid(True, linestyle="--", alpha=0.5)
-        plt.tight_layout()
-        plt.show()
+        ax_equity.set_title(f"Strategy Equity Curve for {ticker}")
+        ax_equity.set_ylabel("Portfolio Value")
+        ax_equity.legend()
+        ax_equity.grid(True, linestyle="--", alpha=0.5)
 
-    def plot_comparison(self, results_by_ticker: dict[str, pd.DataFrame]) -> None:
-        """
-        Plot normalized equity curves for several tickers on the same figure.
+        # --- Bottom: drawdown ---
+        ax_dd.plot(df["date"], drawdown, linewidth=1.5)
+        ax_dd.set_ylabel("Drawdown")
+        ax_dd.set_xlabel("Date")
+        ax_dd.grid(True, linestyle="--", alpha=0.5)
 
-        Parameters
-        ----------
-        results_by_ticker : dict[str, pd.DataFrame]
-            Mapping from ticker symbol to the DataFrame returned by
-            `run_buy_and_hold` for that ticker.
-        """
-        if not results_by_ticker:
-            raise ValueError("No results to plot in plot_comparison().")
+        # Force y-axis to show negatives clearly
+        ax_dd.set_ylim(drawdown.min() * 1.05, 0.0)
 
-        plt.figure(figsize=(10, 6))
-
-        for ticker, df in results_by_ticker.items():
-            if df.empty:
-                continue
-
-            # X-axis: use the date column if present, otherwise the index
-            x = df["date"] if "date" in df.columns else df.index
-            y = df["returns_factor"]  # normalized so all start at 1.0
-
-            plt.plot(x, y, label=ticker)
-
-        # Use the first ticker's dates for buy/sell vertical markers (optional)
-        first_df = next(iter(results_by_ticker.values()))
-        if "date" in first_df.columns:
-            buy_date = first_df["date"].iloc[0]
-            sell_date = first_df["date"].iloc[-1]
-            plt.axvline(buy_date, linestyle="--", alpha=0.3)
-            plt.axvline(sell_date, linestyle="--", alpha=0.3)
-
-        plt.title("Buy & Hold Comparison Across Tickers")
-        plt.xlabel("Date")
-        plt.ylabel("Portfolio value (normalized to 1.0)")
-        plt.legend()
-        plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.show()
 
@@ -371,15 +339,7 @@ class Backtester:
     # ------------------------------------------------------------------
     def summarize_performance(self, df: pd.DataFrame, initial_capital: float) -> dict:
         """
-        Compute basic performance statistics for a single buy & hold run.
-
-        Returns a dict with:
-        - final_value
-        - total_return
-        - annualized_return
-        - annualized_vol
-        - max_drawdown
-        - max_drawdown_duration_days
+        Compute basic performance statistics for a single strategy run.
         """
         if df.empty:
             raise ValueError("Cannot summarize performance of an empty DataFrame.")
@@ -437,3 +397,139 @@ class Backtester:
             "max_drawdown": max_drawdown,
             "max_drawdown_duration_days": max_drawdown_duration_days,
         }
+
+    def plot_risk_return(self, summary_df: pd.DataFrame) -> None:
+        """
+        Plot a risk-return scatter for multiple tickers.
+
+        Expects summary_df to have:
+        - 'annualized_return'
+        - 'annualized_vol'
+        indexed by ticker.
+        """
+        if summary_df.empty:
+            raise ValueError("summary_df is empty in plot_risk_return().")
+
+        plt.figure(figsize=(8, 6))
+
+        x = summary_df["annualized_vol"]
+        y = summary_df["annualized_return"]
+
+        plt.scatter(x, y)
+
+        # Annotate each point with the ticker
+        for ticker, (vol, ret) in summary_df[["annualized_vol", "annualized_return"]].iterrows():
+            plt.annotate(
+                ticker,
+                (vol, ret),
+                textcoords="offset points",
+                xytext=(5, 5),
+                fontsize=8,
+            )
+
+        plt.xlabel("Annualized Volatility")
+        plt.ylabel("Annualized Return")
+        plt.title("Risk–Return Scatter (per ticker)")
+        plt.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_comparison(self, results_by_ticker: dict[str, pd.DataFrame]) -> None:
+        """
+        Plot normalized equity curves for several tickers on the same figure.
+        """
+        if not results_by_ticker:
+            raise ValueError("No results to plot in plot_comparison().")
+
+        plt.figure(figsize=(10, 6))
+
+        for ticker, df in results_by_ticker.items():
+            if df.empty:
+                continue
+
+            x = df["date"] if "date" in df.columns else df.index
+            y = df["returns_factor"]
+
+            plt.plot(x, y, label=ticker)
+
+        first_df = next(iter(results_by_ticker.values()))
+        if "date" in first_df.columns:
+            buy_date = first_df["date"].iloc[0]
+            sell_date = first_df["date"].iloc[-1]
+            plt.axvline(buy_date, linestyle="--", alpha=0.3)
+            plt.axvline(sell_date, linestyle="--", alpha=0.3)
+
+        plt.title("Strategy Comparison Across Tickers")
+        plt.xlabel("Date")
+        plt.ylabel("Portfolio value (normalized to 1.0)")
+        plt.legend()
+        plt.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_overview(
+        self,
+        results_by_ticker: dict[str, pd.DataFrame],
+        summary_df: pd.DataFrame,
+    ) -> None:
+        """
+        Combined overview figure:
+
+        Top:  risk–return scatter (annualized_return vs annualized_vol)
+        Bottom: normalized equity curves (returns_factor) across tickers.
+        """
+        if not results_by_ticker:
+            raise ValueError("No results to plot in plot_overview().")
+        if summary_df.empty:
+            raise ValueError("summary_df is empty in plot_overview().")
+
+        fig, (ax_rr, ax_eq) = plt.subplots(
+            2, 1, figsize=(10, 10),
+            gridspec_kw={"height_ratios": [1, 2]},
+            sharex=False
+        )
+
+        # --- Top: risk–return scatter ---
+        x = summary_df["annualized_vol"]
+        y = summary_df["annualized_return"]
+
+        ax_rr.scatter(x, y)
+
+        for ticker, (vol, ret) in summary_df[["annualized_vol", "annualized_return"]].iterrows():
+            ax_rr.annotate(
+                ticker,
+                (vol, ret),
+                textcoords="offset points",
+                xytext=(5, 5),
+                fontsize=8,
+            )
+
+        ax_rr.set_xlabel("Annualized Volatility")
+        ax_rr.set_ylabel("Annualized Return")
+        ax_rr.set_title("Risk–Return Scatter (per ticker)")
+        ax_rr.grid(True, linestyle="--", alpha=0.5)
+
+        # --- Bottom: normalized equity curves ---
+        for ticker, df in results_by_ticker.items():
+            if df.empty:
+                continue
+            x_eq = df["date"] if "date" in df.columns else df.index
+            y_eq = df["returns_factor"]
+            ax_eq.plot(x_eq, y_eq, label=ticker)
+
+        first_df = next(iter(results_by_ticker.values()))
+        if "date" in first_df.columns:
+            buy_date = first_df["date"].iloc[0]
+            sell_date = first_df["date"].iloc[-1]
+            ax_eq.axvline(buy_date, linestyle="--", alpha=0.3)
+            ax_eq.axvline(sell_date, linestyle="--", alpha=0.3)
+
+        ax_eq.set_title("Strategy Comparison Across Tickers")
+        ax_eq.set_xlabel("Date")
+        ax_eq.set_ylabel("Portfolio value (normalized to 1.0)")
+        ax_eq.legend()
+        ax_eq.grid(True, linestyle="--", alpha=0.5)
+
+        plt.tight_layout()
+        plt.show()
+
