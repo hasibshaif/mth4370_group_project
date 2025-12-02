@@ -145,6 +145,146 @@ class Backtester:
         )
 
         return df
+    
+    def run_ma_crossover(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+        initial_capital: float = 1000.0,
+        short_window: int = 20,
+        long_window: int = 50,
+        transaction_cost_pct: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Moving Average Crossover strategy.
+
+        Rules (long-only):
+        - Compute short and long moving averages of the closing price.
+        - When short_ma > long_ma -> be fully invested (long).
+        - When short_ma <= long_ma -> be in cash.
+        - Each switch between cash <-> invested incurs transaction costs.
+
+        Parameters
+        ----------
+        ticker : str
+            Stock symbol, e.g. "TSLA".
+        start : str
+            Start date (YYYY-MM-DD) for the backtest window.
+        end : str
+            End date (YYYY-MM-DD) for the backtest window.
+        initial_capital : float
+            Starting capital for the strategy.
+        short_window : int
+            Lookback window for the short moving average.
+        long_window : int
+            Lookback window for the long moving average.
+        transaction_cost_pct : float
+            Per-trade fee (fraction of traded notional).
+            Example: 0.001 = 0.1% of trade value per buy or sell.
+
+        Returns
+        -------
+        pd.DataFrame
+            Same structure as `run_buy_and_hold`, with:
+            - price
+            - short_ma, long_ma
+            - signal (1 = invested, 0 = cash)
+            - shares, cash, portfolio_value, returns_factor
+        """
+        if long_window <= short_window:
+            raise ValueError("long_window must be greater than short_window for MA crossover.")
+
+        # Load data for the given window
+        df = self.loader.load(ticker, start=start, end=end)
+        if df.empty:
+            raise ValueError(f"No data available for {ticker} in range {start} to {end}")
+
+        # Use close as price
+        df["price"] = df["close"]
+
+        # Compute moving averages
+        df["short_ma"] = df["price"].rolling(window=short_window).mean()
+        df["long_ma"] = df["price"].rolling(window=long_window).mean()
+
+        # Drop rows before both MAs are defined
+        df = df.dropna(subset=["short_ma", "long_ma"]).copy()
+        if df.empty:
+            raise ValueError(
+                f"Not enough data to compute moving averages for {ticker} "
+                f"(short_window={short_window}, long_window={long_window})"
+            )
+
+        # Signal: 1 if short_ma > long_ma, else 0
+        df["signal"] = (df["short_ma"] > df["long_ma"]).astype(int)
+
+        # Initialize portfolio state
+        cash = initial_capital
+        shares = 0
+        position = 0  # 0 = cash, 1 = invested
+
+        cash_list = []
+        shares_list = []
+        portval_list = []
+
+        # Walk forward in time
+        for i in range(len(df)):
+            price = df["price"].iloc[i]
+            signal = df["signal"].iloc[i]
+
+            # Buy: go from cash -> invested
+            if signal == 1 and position == 0:
+                # Pay fee on the cash we are about to deploy
+                fee = cash * transaction_cost_pct
+                tradable_cash = cash - fee
+                if tradable_cash > 0:
+                    new_shares = math.floor(tradable_cash / price)
+                else:
+                    new_shares = 0
+
+                spend = new_shares * price
+                cash = cash - fee - spend
+                shares = new_shares
+                position = 1
+
+            # Sell: go from invested -> cash
+            elif signal == 0 and position == 1:
+                trade_notional = shares * price
+                fee = trade_notional * transaction_cost_pct
+                cash = cash + trade_notional - fee
+                shares = 0
+                position = 0
+
+            # Portfolio value at the end of the day
+            portfolio_value = cash + shares * price
+
+            cash_list.append(cash)
+            shares_list.append(shares)
+            portval_list.append(portfolio_value)
+
+        # Attach portfolio series
+        df["cash"] = cash_list
+        df["shares"] = shares_list
+        df["portfolio_value"] = portval_list
+
+        # Normalize by initial capital
+        df["returns_factor"] = df["portfolio_value"] / initial_capital
+
+        # Performance summary
+        summary = self.summarize_performance(df, initial_capital=initial_capital)
+
+        print(
+            f"[Backtester] MA Crossover {ticker}: {start} -> {end}\n"
+            f"  Final value:         ${summary['final_value']:,.2f}\n"
+            f"  Total return:        {summary['total_return']:.2%}\n"
+            f"  Annualized return:   {summary['annualized_return']:.2%}\n"
+            f"  Annualized vol:      {summary['annualized_vol']:.2%}\n"
+            f"  Max drawdown:        {summary['max_drawdown']:.2%}\n"
+            f"  Max DD duration:     {summary['max_drawdown_duration_days']} days"
+        )
+
+        return df
+
 
     # ------------------------------------------------------------------
     # Visualization

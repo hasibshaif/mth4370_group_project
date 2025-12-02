@@ -45,13 +45,21 @@ except ImportError:  # pragma: no cover
 STRATEGY_CONFIG = {
     "ticker": "TSLA",
     "buy_date": "2023-01-03",       # YYYY-MM-DD
-    "holding_period_days": 14,      # calendar days
+    "holding_period_days": 220,     # calendar days for the test window
     "initial_capital": 10_000.0,    # dollars
 
-    # NEW: round-trip transaction cost as a percentage of initial capital.
-    # Example: 0.001 = 0.1% total cost (entry + exit combined)
-    "transaction_cost_pct": 0.1
+    # Round-trip transaction cost as a percentage of initial capital
+    # (for Buy & Hold) or per-trade fee (for MA crossover).
+    "transaction_cost_pct": 0.001,
+
+    # NEW: which strategy to run: "buy_and_hold" or "ma_crossover"
+    "strategy": "buy_and_hold",
+
+    # NEW: parameters for the moving average crossover strategy
+    "short_window": 20,
+    "long_window": 50,
 }
+
 
 # Tickers to compare on the same buy/sell dates
 # COMPARISON_TICKERS = [
@@ -73,18 +81,28 @@ def main() -> None:
     initial_capital = cfg["initial_capital"]
     transaction_cost_pct = cfg.get("transaction_cost_pct", 0.0)
 
+    # NEW: strategy + MA windows
+    strategy = cfg.get("strategy", "buy_and_hold")
+    short_window = cfg.get("short_window", 20)
+    long_window = cfg.get("long_window", 50)
+
+
     # Compute sell date in calendar days
     buy_date = datetime.strptime(buy_date_str, "%Y-%m-%d")
     sell_date = buy_date + timedelta(days=holding_period_days)
     sell_date_str = sell_date.strftime("%Y-%m-%d")
 
     print(f"  Primary ticker:      {ticker}")
+    print(f"  Strategy:            {strategy}")
     print(f"  Buy date (request):  {buy_date_str}")
     print(f"  Sell date (request): {sell_date_str}")
     print(f"  Holding period:      {holding_period_days} days")
     print(f"  Initial capital:     {initial_capital:.2f}")
-    print(f"  Transaction cost:    {transaction_cost_pct * 100:.3f}% (round-trip)")
+    print(f"  Transaction cost:    {transaction_cost_pct * 100:.3f}%")
+    if strategy == "ma_crossover":
+        print(f"  MA windows:          short={short_window}, long={long_window}")
     print("  Comparison tickers:  " + ", ".join(COMPARISON_TICKERS))
+
 
     # Initialize DataLoader (now backed by SQLite DB) and Backtester
     data_loader = DataLoader(db_path="data/prices.db")
@@ -94,16 +112,31 @@ def main() -> None:
     results_by_ticker: dict[str, pd.DataFrame] = {}
 
     for comp_ticker in COMPARISON_TICKERS:
-        print(f"\n[main] Running Buy & Hold for {comp_ticker}...")
-        df_comp = backtester.run_buy_and_hold(
-            ticker=comp_ticker,
-            start=buy_date_str,
-            end=sell_date_str,
-            initial_capital=initial_capital,
-            # NEW: pass the cost into the backtester (defaults to 0.0 if missing)
-            transaction_cost_pct=transaction_cost_pct,
-        )
+        if strategy == "buy_and_hold":
+            print(f"\n[main] Running Buy & Hold for {comp_ticker}...")
+            df_comp = backtester.run_buy_and_hold(
+                ticker=comp_ticker,
+                start=buy_date_str,
+                end=sell_date_str,
+                initial_capital=initial_capital,
+                transaction_cost_pct=transaction_cost_pct,
+            )
+        elif strategy == "ma_crossover":
+            print(f"\n[main] Running MA Crossover for {comp_ticker}...")
+            df_comp = backtester.run_ma_crossover(
+                ticker=comp_ticker,
+                start=buy_date_str,
+                end=sell_date_str,
+                initial_capital=initial_capital,
+                short_window=short_window,
+                long_window=long_window,
+                transaction_cost_pct=transaction_cost_pct,
+            )
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
         results_by_ticker[comp_ticker] = df_comp
+
 
     # Use the primary ticker's DataFrame for the text summary
         # Use the primary ticker's DataFrame for the text summary
@@ -121,7 +154,7 @@ def main() -> None:
     print(f"Ticker:           {ticker}")
     print(f"Buy date:         {buy_date_str} @ {buy_price:.2f}")
     print(f"Sell date:        {sell_date_str} @ {sell_price:.2f}")
-    print(f"Shares (integer): {shares}")
+    print(f"Shares (integerrun_buy_and_hold(): {shares}")
     print(f"Initial capital:  {initial_capital:.2f}")
     print(f"Transaction cost: {transaction_cost_pct * 100:.3f}% (round-trip)")
     print(f"Final value:      {final_value:.2f}")
@@ -163,6 +196,8 @@ def main() -> None:
     backtester.plot_comparison(results_by_ticker)
 
     print("\n[main] Backtest complete.")
+
+
 
 
 
