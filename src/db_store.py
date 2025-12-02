@@ -6,6 +6,10 @@ from typing import Optional
 
 import pandas as pd
 
+from typing import Optional
+from datetime import datetime
+
+
 
 class PriceStore:
     def __init__(self, db_path: str = "data/prices.db") -> None:
@@ -43,12 +47,6 @@ class PriceStore:
             return
 
         ticker = ticker.upper()
-
-        # --- 0) If this ticker already exists, delete its old rows ---
-        # For this project, we treat each download as the "source of truth"
-        print(f"[db_store] Deleting existing rows for {ticker} (if any)")
-        self.conn.execute("DELETE FROM prices WHERE ticker = ?", (ticker,))
-        self.conn.commit()
 
         # --- 1) Flatten MultiIndex columns if needed ---
         if isinstance(df.columns, pd.MultiIndex):
@@ -103,3 +101,36 @@ class PriceStore:
 
         df = pd.read_sql(query, self.conn, params=params, parse_dates=["date"])
         return df
+    
+    def has_ticker(self, ticker: str) -> bool:
+        """
+        Return True if we already have any data for this ticker in the prices table.
+        """
+        cur = self.conn.execute(
+            "SELECT 1 FROM prices WHERE ticker = ? LIMIT 1",
+            (ticker.upper(),),
+        )
+        return cur.fetchone() is not None
+    
+    def get_date_range(self, ticker: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Return (min_ts, max_ts) for this ticker as ISO date strings,
+        or (None, None) if we have no data.
+        """
+        cur = self.conn.execute(
+            "SELECT MIN(ts), MAX(ts) FROM prices WHERE ticker = ?",
+            (ticker.upper(),),
+        )
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None, None
+        return row[0], row[1]
+
+    def get_max_ts(self, ticker: str) -> Optional[str]:
+        """
+        Convenience: just the latest date we have for this ticker, or None.
+        """
+        _, max_ts = self.get_date_range(ticker)
+        return max_ts
+
+
