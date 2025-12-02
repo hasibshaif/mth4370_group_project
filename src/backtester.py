@@ -12,7 +12,8 @@ Right now we implement a **single** strategy:
 The backtester:
 
 - Uses integer shares (no fractional shares).
-- Invests as much of the initial capital as possible at the entry date.
+- Invests as much of the initial capital as possible at the entry date
+  (optionally net of transaction costs).
 - Keeps leftover cash in the portfolio (uninvested).
 - Tracks portfolio value over time.
 - Plots the equity curve with markers for buy/sell.
@@ -54,6 +55,7 @@ class Backtester:
         start: str,
         end: str,
         initial_capital: float = 1000.0,
+        transaction_cost_pct: float = 0.0,
     ) -> pd.DataFrame:
         """
         Simulate a Buy & Hold strategy.
@@ -62,6 +64,7 @@ class Backtester:
         - Buy on the first trading day >= `start`
         - Hold until the last trading day <= `end`
         - Use integer shares, investing as much of `initial_capital` as possible
+        - Optionally apply a round-trip transaction cost (percentage of initial capital)
         - Leave leftover cash sitting in the portfolio
 
         Parameters
@@ -74,6 +77,9 @@ class Backtester:
             End date (YYYY-MM-DD) for the backtest window.
         initial_capital : float, optional
             Starting capital for the strategy.
+        transaction_cost_pct : float, optional
+            Round-trip transaction cost as a fraction of initial capital.
+            Example: 0.001 = 0.1% of initial capital lost to fees (entry+exit).
 
         Returns
         -------
@@ -83,7 +89,7 @@ class Backtester:
             - close
             - price                (alias of close)
             - shares               (constant over time)
-            - cash                 (unused leftover from initial capital)
+            - cash                 (unused leftover from initial capital net of fees)
             - portfolio_value      (shares * price + cash)
             - returns_factor       (portfolio_value / initial_capital)
         """
@@ -96,19 +102,24 @@ class Backtester:
         # Use closing price for valuation
         df["price"] = df["close"]
 
+        # Capital after applying round-trip transaction costs
+        # We treat transaction_cost_pct as a one-shot cost on initial_capital
+        # so all subsequent PnL is net of fees.
+        effective_capital = initial_capital * (1.0 - transaction_cost_pct)
+
         # Entry is at the first row
         entry_price = df["price"].iloc[0]
 
-        # Integer number of shares
-        shares = math.floor(initial_capital / entry_price)
+        # Integer number of shares based on capital net of fees
+        shares = math.floor(effective_capital / entry_price)
         if shares <= 0:
             raise ValueError(
-                f"Initial capital {initial_capital} is too small to buy even 1 share "
+                f"Effective capital {effective_capital} is too small to buy even 1 share "
                 f"of {ticker} at entry price {entry_price:.2f}"
             )
 
         # Any leftover stays as unused cash
-        cash = initial_capital - shares * entry_price
+        cash = effective_capital - shares * entry_price
 
         # Store position info in the DataFrame
         df["shares"] = shares
@@ -117,7 +128,7 @@ class Backtester:
         # Portfolio value through time
         df["portfolio_value"] = df["shares"] * df["price"] + df["cash"]
 
-        # Normalized returns factor relative to initial capital
+        # Normalized returns factor relative to original initial capital
         df["returns_factor"] = df["portfolio_value"] / initial_capital
 
         # Performance summary
@@ -134,78 +145,6 @@ class Backtester:
         )
 
         return df
-    
-        # ------------------------------------------------------------------
-    # Performance metrics
-    # ------------------------------------------------------------------
-    def summarize_performance(self, df: pd.DataFrame, initial_capital: float) -> dict:
-        """
-        Compute basic performance statistics for a single buy & hold run.
-
-        Returns a dict with:
-        - final_value
-        - total_return
-        - annualized_return
-        - annualized_vol
-        - max_drawdown
-        - max_drawdown_duration_days
-        """
-        if df.empty:
-            raise ValueError("Cannot summarize performance of an empty DataFrame.")
-
-        # Final portfolio value and total return
-        final_value = float(df["portfolio_value"].iloc[-1])
-        total_return = final_value / initial_capital - 1.0
-
-        # Daily simple returns of the portfolio
-        daily_returns = df["portfolio_value"].pct_change().dropna()
-
-        # Number of calendar days in the trade
-        if "date" in df.columns and len(df.index) > 1:
-            n_days = (df["date"].iloc[-1] - df["date"].iloc[0]).days
-        else:
-            n_days = 0
-
-        # Annualized return (using total_return over n_days)
-        if n_days > 0:
-            annualized_return = (1.0 + total_return) ** (252.0 / n_days) - 1.0
-        else:
-            annualized_return = float("nan")
-
-        # Annualized volatility of daily returns
-        if len(daily_returns) > 1:
-            annualized_vol = float(daily_returns.std() * (252.0 ** 0.5))
-        else:
-            annualized_vol = float("nan")
-
-        # Max drawdown
-        cum_max = df["portfolio_value"].cummax()
-        drawdown = df["portfolio_value"] / cum_max - 1.0
-        max_drawdown = float(drawdown.min())
-
-        # Max drawdown duration (consecutive days below a peak)
-        durations = []
-        current_duration = 0
-        for dd in drawdown:
-            if dd < 0:
-                current_duration += 1
-            else:
-                if current_duration > 0:
-                    durations.append(current_duration)
-                current_duration = 0
-        if current_duration > 0:
-            durations.append(current_duration)
-
-        max_drawdown_duration_days = max(durations) if durations else 0
-
-        return {
-            "final_value": final_value,
-            "total_return": total_return,
-            "annualized_return": annualized_return,
-            "annualized_vol": annualized_vol,
-            "max_drawdown": max_drawdown,
-            "max_drawdown_duration_days": max_drawdown_duration_days,
-        }
 
     # ------------------------------------------------------------------
     # Visualization
@@ -245,9 +184,10 @@ class Backtester:
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.show()
-    
+
     def plot_comparison(self, results_by_ticker: dict[str, pd.DataFrame]) -> None:
-        """Plot normalized equity curves for several tickers on the same figure.
+        """
+        Plot normalized equity curves for several tickers on the same figure.
 
         Parameters
         ----------
@@ -285,84 +225,6 @@ class Backtester:
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.show()
-
-
-    # ------------------------------------------------------------------
-    # Performance metrics
-    # ------------------------------------------------------------------
-    def summarize_performance(self, df: pd.DataFrame, initial_capital: float) -> dict:
-        """
-        Compute basic performance statistics for a single buy & hold run.
-
-        Returns a dict with:
-        - final_value
-        - total_return
-        - annualized_return
-        - annualized_vol
-        - max_drawdown
-        - max_drawdown_duration_days
-        """
-        if df.empty:
-            raise ValueError("Cannot summarize performance of an empty DataFrame.")
-
-        # Final portfolio value and total return
-        final_value = float(df["portfolio_value"].iloc[-1])
-        total_return = final_value / initial_capital - 1.0
-
-        # Daily returns of the portfolio (simple returns)
-        daily_returns = df["portfolio_value"].pct_change().dropna()
-
-        if len(df.index) > 1:
-            # Number of calendar days in the trade
-            n_days = (df["date"].iloc[-1] - df["date"].iloc[0]).days
-        else:
-            n_days = 0
-
-        # Annualization factor (approx. 252 trading days per year)
-        trading_days = max(len(daily_returns), 1)
-        annualization_factor = 252 / trading_days
-
-        # Annualized return (approximate, assuming compounding of daily returns)
-        if n_days > 0:
-            annualized_return = (1 + total_return) ** (252 / n_days) - 1
-        else:
-            annualized_return = float("nan")
-
-        # Annualized volatility of daily returns
-        if len(daily_returns) > 1:
-            annualized_vol = float(daily_returns.std() * (252 ** 0.5))
-        else:
-            annualized_vol = float("nan")
-
-        # Max drawdown
-        cum_max = df["portfolio_value"].cummax()
-        drawdown = df["portfolio_value"] / cum_max - 1.0
-        max_drawdown = float(drawdown.min())
-
-        # Max drawdown duration (in days)
-        # Count how long we stay below a new peak
-        durations = []
-        current_duration = 0
-        for dd in drawdown:
-            if dd < 0:
-                current_duration += 1
-            else:
-                if current_duration > 0:
-                    durations.append(current_duration)
-                current_duration = 0
-        if current_duration > 0:
-            durations.append(current_duration)
-
-        max_drawdown_duration_days = max(durations) if durations else 0
-
-        return {
-            "final_value": final_value,
-            "total_return": total_return,
-            "annualized_return": annualized_return,
-            "annualized_vol": annualized_vol,
-            "max_drawdown": max_drawdown,
-            "max_drawdown_duration_days": max_drawdown_duration_days,
-        }
 
     # ------------------------------------------------------------------
     # Performance metrics
