@@ -31,6 +31,7 @@ What this does (end-to-end):
 from datetime import datetime, timedelta
 import traceback
 import pandas as pd  # <-- needed for type hints (pd.DataFrame)
+import argparse
 
 
 # Flexible imports so it works whether modules live in `src/` or alongside main.py
@@ -40,6 +41,7 @@ try:  # pragma: no cover - import flexibility helper
 except ImportError:  # pragma: no cover
     from data_loader import DataLoader
     from backtester import Backtester
+
 
 
 # Strategy configuration
@@ -203,13 +205,64 @@ def main() -> None:
 
     print("\n[main] Backtest complete.")
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a simple stock backtest.")
+
+    parser.add_argument("--ticker", type=str, default="TSLA",
+                        help="Primary ticker to backtest (default: TSLA)")
+    parser.add_argument("--buy-date", type=str, default="2023-01-03",
+                        help="Start date YYYY-MM-DD (default: 2023-01-03)")
+    parser.add_argument("--holding-days", type=int, default=220,
+                        help="Holding period in calendar days (default: 220)")
+    parser.add_argument("--initial-capital", type=float, default=10_000.0,
+                        help="Initial capital (default: 10000.0)")
+    parser.add_argument(
+        "--transaction-cost-pct",
+        type=float,
+        default=0.001,
+        # NOTE: 0.1%% so argparse doesn't choke on the %
+        help="Transaction cost as fraction (default: 0.001 = 0.1%%)"
+    )
+
+    parser.add_argument("--strategy", type=str, choices=["buy_and_hold", "ma_crossover"],
+                        default="buy_and_hold",
+                        help="Strategy to run (default: buy_and_hold)")
+
+    parser.add_argument("--short-window", type=int, default=20,
+                        help="Short MA window (used only for ma_crossover)")
+    parser.add_argument("--long-window", type=int, default=50,
+                        help="Long MA window (used only for ma_crossover)")
+
+    parser.add_argument("--comparison-tickers", type=str,
+                        default="AAPL,MSFT,GOOGL,TSLA,AMZN",
+                        help="Comma-separated list of comparison tickers")
+
+    return parser.parse_args()
+
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("\n[ERROR] An exception occurred while running main():")
-        print(e)
-        print("\nFull traceback:")
-        traceback.print_exc()
+    # 1) Parse CLI args
+    args = parse_args()
+
+    # 2) Override config with CLI values
+    STRATEGY_CONFIG = {
+        "ticker": args.ticker,
+        "buy_date": args.buy_date,
+        "holding_period_days": args.holding_days,
+        "initial_capital": args.initial_capital,
+        "transaction_cost_pct": args.transaction_cost_pct,
+        "strategy": args.strategy,
+        "short_window": args.short_window,
+        "long_window": args.long_window,
+    }
+
+    COMPARISON_TICKERS = [
+        t.strip()
+        for t in args.comparison_tickers.split(",")
+        if t.strip()
+    ]
+
+    # 3) Run the backtest
+    main()
+
