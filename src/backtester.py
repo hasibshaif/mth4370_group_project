@@ -9,6 +9,7 @@ Implemented strategies:
 
     - Buy & Hold between two calendar dates.
     - Moving Average Crossover (long-only).
+    - Volatility Take-Profit (enter after big daily moves, exit on TP/SL).
 
 The backtester:
 
@@ -17,13 +18,14 @@ The backtester:
   (optionally net of transaction costs).
 - Keeps leftover cash in the portfolio (uninvested).
 - Tracks portfolio value over time.
-- Plots the equity curve with markers for buy/sell.
+- Plots equity curves and risk/return diagnostics.
 """
 
 import math
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 
 # Try to import DataLoader regardless of whether you're using a `src/` package
 # layout or keeping the files in the project root.
@@ -36,6 +38,12 @@ except ImportError:  # pragma: no cover
 class Backtester:
     """
     Simple backtesting engine wired to a `DataLoader`.
+
+    All concrete strategies follow the same pattern:
+
+        - load prices via self.loader
+        - produce a DataFrame with at least:
+            date, price, shares, cash, portfolio_value, returns_factor
     """
 
     def __init__(self, data_loader: DataLoader):
@@ -145,6 +153,9 @@ class Backtester:
 
         return df
 
+    # ------------------------------------------------------------------
+    # Strategy: Moving Average Crossover
+    # ------------------------------------------------------------------
     def run_ma_crossover(
         self,
         ticker: str,
@@ -163,33 +174,6 @@ class Backtester:
         - When short_ma > long_ma -> be fully invested (long).
         - When short_ma <= long_ma -> be in cash.
         - Each switch between cash <-> invested incurs transaction costs.
-
-        Parameters
-        ----------
-        ticker : str
-            Stock symbol, e.g. "TSLA".
-        start : str
-            Start date (YYYY-MM-DD) for the backtest window.
-        end : str
-            End date (YYYY-MM-DD) for the backtest window.
-        initial_capital : float
-            Starting capital for the strategy.
-        short_window : int
-            Lookback window for the short moving average.
-        long_window : int
-            Lookback window for the long moving average.
-        transaction_cost_pct : float
-            Per-trade fee (fraction of traded notional).
-            Example: 0.001 = 0.1% of trade value per buy or sell.
-
-        Returns
-        -------
-        pd.DataFrame
-            Same structure as `run_buy_and_hold`, with:
-            - price
-            - short_ma, long_ma
-            - signal (1 = invested, 0 = cash)
-            - shares, cash, portfolio_value, returns_factor
         """
         if long_window <= short_window:
             raise ValueError("long_window must be greater than short_window for MA crossover.")
@@ -283,6 +267,190 @@ class Backtester:
         )
 
         return df
+
+    # ------------------------------------------------------------------
+    # Strategy: Volatility Take-Profit
+    # ------------------------------------------------------------------
+    def run_volatility_tp(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+        initial_capital: float,
+        vol_window: int = 20,          # currently unused; reserved for future tweaks
+        vol_threshold: float = 0.05,   # absolute daily move threshold
+        take_profit: float = 0.02,
+        stop_loss=None,                # Python 3.9-friendly type
+        transaction_cost_pct: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Long-only strategy driven by big daily moves and a profit target.
+
+        Logic:
+
+        - Compute daily returns and absolute daily move |ret|.
+        - If we are flat and |ret| > vol_threshold on a given day -> buy with all capital.
+        - Once in a position, hold until either:
+            * price / entry_price - 1 >= take_profit  (take profit)
+            * OR stop_loss is set and price / entry_price - 1 <= -stop_loss (stop loss)
+        - Liquidate at the end if still holding.
+
+        Note: `vol_window` is currently unused but kept in the signature / CLI
+        so we can later switch to a rolling-volatility definition without
+        breaking callers.
+        """
+        print(f"[Backtester] Volatility TP {ticker}: {start} -> {end}")
+
+        # 1) Load data exactly like other strategies
+        df = self.loader.load(ticker, start=start, end=end)
+        if df.empty:
+            raise ValueError(f"No data available for {ticker} in range {start} to {end}")
+
+        # Use closing price as "price"
+        df["price"] = df["close"]
+
+        # Daily simple returns
+        df["ret"] = df["price"].pct_change()
+
+        # Absolute daily move (e.g. 0.05 = 5% move up OR down)
+        df["abs_move"] = df["ret"].abs()
+
+        # 2) Simulate trading day by day
+        cash = initial_capital
+        shares = 0
+        entry_price = None
+
+        cash_list = []
+        shares_list = []
+        value_list = []
+        signal_list = []  # 1 when long, 0 when flat
+
+        for idx, row in df.iterrows():
+            price = row["price"]
+            move = row["abs_move"]
+
+            # Default: keep previous position
+            signal = 1 if shares > 0 else 0
+
+            # Entry: currently flat, big daily move (up or down)
+            if shares == 0 and move is not None and not np.isnan(move):
+                if move > vol_threshold:
+                    trade_cost = cash * transaction_cost_pct
+                    investable = cash - trade_cost
+                    new_shares = int(investable // price)
+                    if new_shares > 0:
+                        cash = cash - trade_cost - new_shares * price
+                        shares = new_shares
+                        entry_price = price
+                        signal = 1
+
+            # Exit: we are in a position, check TP / SL
+            elif shares > 0 and entry_price is not None:
+                ret_since_entry = price / entry_price - 1.0
+                hit_tp = ret_since_entry >= take_profit
+                hit_sl = (stop_loss is not None) and (ret_since_entry <= -stop_loss)
+
+                if hit_tp or hit_sl:
+                    trade_value = shares * price
+                    trade_cost = trade_value * transaction_cost_pct
+                    cash = cash + trade_value - trade_cost
+                    shares = 0
+                    entry_price = None
+                    signal = 0
+
+            portfolio_value = cash + shares * price
+
+            cash_list.append(cash)
+            shares_list.append(shares)
+            value_list.append(portfolio_value)
+            signal_list.append(signal)
+
+        # 3) Liquidate leftovers at end if still holding
+        if shares > 0:
+            last_price = df["price"].iloc[-1]
+            trade_value = shares * last_price
+            trade_cost = trade_value * transaction_cost_pct
+            cash = cash + trade_value - trade_cost
+            shares = 0
+            value_list[-1] = cash  # last point reflects liquidation
+
+        # 4) Attach series back to df (keeps 'date' column for plots)
+        df["cash"] = cash_list
+        df["shares"] = shares_list
+        df["portfolio_value"] = value_list
+        df["signal"] = signal_list
+        df["returns_factor"] = df["portfolio_value"] / initial_capital
+
+        # Performance summary (same print style as the others)
+        summary = self.summarize_performance(df, initial_capital=initial_capital)
+        print(
+            f"  Final value:         ${summary['final_value']:,.2f}\n"
+            f"  Total return:        {summary['total_return']:.2%}\n"
+            f"  Annualized return:   {summary['annualized_return']:.2%}\n"
+            f"  Annualized vol:      {summary['annualized_vol']:.2%}\n"
+            f"  Max drawdown:        {summary['max_drawdown']:.2%}\n"
+            f"  Max DD duration:     {summary['max_drawdown_duration_days']} days"
+        )
+
+        return df
+
+    # ------------------------------------------------------------------
+    # Generic strategy dispatcher
+    # ------------------------------------------------------------------
+    def run_strategy(
+        self,
+        strategy: str,
+        ticker: str,
+        start: str,
+        end: str,
+        initial_capital: float,
+        **params,
+    ) -> pd.DataFrame:
+        """
+        Generic entry point to run ANY strategy by name.
+
+        All strategies must:
+          - take (ticker, start, end, initial_capital, **params)
+          - return a DataFrame with at least:
+                price, shares, cash, portfolio_value, returns_factor
+        """
+        transaction_cost_pct = params.get("transaction_cost_pct", 0.0)
+
+        if strategy == "buy_and_hold":
+            return self.run_buy_and_hold(
+                ticker=ticker,
+                start=start,
+                end=end,
+                initial_capital=initial_capital,
+                transaction_cost_pct=transaction_cost_pct,
+            )
+
+        elif strategy == "ma_crossover":
+            return self.run_ma_crossover(
+                ticker=ticker,
+                start=start,
+                end=end,
+                initial_capital=initial_capital,
+                short_window=params.get("short_window", 20),
+                long_window=params.get("long_window", 50),
+                transaction_cost_pct=transaction_cost_pct,
+            )
+
+        elif strategy == "volatility_tp":
+            return self.run_volatility_tp(
+                ticker=ticker,
+                start=start,
+                end=end,
+                initial_capital=initial_capital,
+                vol_window=params.get("vol_window", 20),
+                vol_threshold=params.get("vol_threshold", 0.05),
+                take_profit=params.get("take_profit", 0.02),
+                stop_loss=params.get("stop_loss", None),
+                transaction_cost_pct=transaction_cost_pct,
+            )
+
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
 
     # ------------------------------------------------------------------
     # Visualization
@@ -532,4 +700,3 @@ class Backtester:
 
         plt.tight_layout()
         plt.show()
-
