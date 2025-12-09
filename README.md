@@ -32,12 +32,96 @@ Supported strategies:
 * Packages:
 
 ```bash
-pip install pandas matplotlib yfinance
+pip install -r requirements.txt
+```
+
+**Note:** If `pip` doesn't work, try `pip3` instead.
+
+Or install manually:
+
+```bash
+pip install pandas matplotlib yfinance flask flask-cors
 ```
 
 (Activate your virtualenv first if you use one.)
 
 `sqlite3` is part of the standard library; no extra install needed.
+
+### Frontend (Node.js)
+* Node.js **16+** and npm
+* Frontend dependencies are in `frontend/package.json` and will be installed automatically.
+
+---
+
+## Running the Application
+
+This project consists of a Flask backend API server and a React frontend. Both need to be running simultaneously.
+
+### Step 1: Start the Flask Backend Server
+
+From the project root directory (`mth4370_group_project`):
+
+```bash
+python api_server.py
+```
+
+**Note:** If `python` doesn't work, try `python3` instead.
+
+The server will start on `http://localhost:5001` and you should see:
+
+```
+🚀 Starting Flask API server...
+📊 Available endpoints:
+   - GET /api/health - Health check
+   - GET /api/stocks - List available tickers
+   - GET /api/stock/<ticker> - Get stock data
+   - GET /api/stock/<ticker>?start=YYYY-MM-DD&end=YYYY-MM-DD - Get filtered data
+   - POST /api/backtest - Run backtest (Buy & Hold strategy)
+   - POST /api/backtest/compare - Run comparison backtest for multiple tickers
+
+🌐 Server running on http://localhost:5001
+```
+
+**Keep this terminal window open** - the server needs to stay running.
+
+### Step 2: Start the Frontend Development Server
+
+Open a **new terminal window** and navigate to the frontend directory:
+
+```bash
+cd frontend
+```
+
+Install dependencies (only needed the first time):
+
+```bash
+npm install
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+You should see output like:
+
+```
+  VITE v7.2.4  ready in 92 ms
+  ➜  Local:   http://localhost:5173/
+```
+
+### Step 3: Open the Application
+
+Open your web browser and navigate to:
+
+```
+http://localhost:5173
+```
+
+The frontend will connect to the backend API automatically. You should see the Backtesting Engine Dashboard.
+
+**Note:** Make sure both the Flask server (port 5001) and the frontend dev server (port 5173) are running at the same time.
 
 ---
 

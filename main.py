@@ -418,7 +418,6 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-
 if __name__ == "__main__":
     # 1) Parse CLI args
     args = parse_args()

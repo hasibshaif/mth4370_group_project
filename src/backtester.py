@@ -22,6 +22,13 @@ The backtester:
 """
 
 import math
+import io
+import base64
+
+# Set matplotlib to use non-interactive backend before importing pyplot
+# This prevents GUI-related errors when running in Flask/server context
+import matplotlib
+matplotlib.use('Agg')  # Use Anti-Grain Geometry backend (non-interactive)
 
 import matplotlib.pyplot as plt
 import pandas as pd
