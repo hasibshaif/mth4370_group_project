@@ -14,7 +14,9 @@ from datetime import datetime
 class PriceStore:
     def __init__(self, db_path: str = "data/prices.db") -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
+        self.db_path = db_path
+        # Enable check_same_thread=False for Flask multi-threaded environment
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -132,5 +134,11 @@ class PriceStore:
         """
         _, max_ts = self.get_date_range(ticker)
         return max_ts
-
+    
+    def get_all_tickers(self) -> list[str]:
+        """
+        Return a list of all unique tickers in the database.
+        """
+        cur = self.conn.execute("SELECT DISTINCT ticker FROM prices ORDER BY ticker")
+        return [row[0] for row in cur.fetchall()]
 

@@ -261,16 +261,28 @@ function App() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="strategyCode">Strategy Code (Optional)</label>
+            <label htmlFor="strategyCode">Custom Strategy Code (Optional)</label>
             <p className="helper-text">
-              Currently uses Buy & Hold strategy. Custom strategy support coming soon.
+              Define a function named <code>strategy(df, initial_capital)</code> that returns a DataFrame with columns: date, price, shares, cash, portfolio_value. Leave blank for Buy & Hold.
             </p>
             <textarea
               id="strategyCode"
               rows={10}
               value={strategyCode}
               onChange={(e) => setStrategyCode(e.target.value)}
-              placeholder="# Paste your strategy code here"
+              placeholder={`# Example: Simple Buy & Hold
+def strategy(df, initial_capital):
+    import math
+    entry_price = df['price'].iloc[0]
+    shares = math.floor(initial_capital / entry_price)
+    cash = initial_capital - shares * entry_price
+    
+    df['shares'] = shares
+    df['cash'] = cash
+    df['portfolio_value'] = shares * df['price'] + cash
+    df['returns_factor'] = df['portfolio_value'] / initial_capital
+    
+    return df`}
             />
           </div>
 

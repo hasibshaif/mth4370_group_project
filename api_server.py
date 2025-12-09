@@ -21,9 +21,16 @@ from typing import Optional
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend access
 
-# Initialize DataLoader and Backtester
-loader = DataLoader(data_dir="data/raw")
-backtester = Backtester(loader)
+# Database path - we'll create connections per-request to avoid SQLite thread issues
+DB_PATH = "data/prices.db"
+
+def get_loader():
+    """Create a new DataLoader instance for each request to avoid SQLite thread issues."""
+    return DataLoader(db_path=DB_PATH)
+
+def get_backtester():
+    """Create a new Backtester instance for each request."""
+    return Backtester(get_loader())
 
 
 def dataframe_to_chart_data(df: pd.DataFrame) -> list:
@@ -82,6 +89,7 @@ def get_stock_data(ticker: str):
         end_date = request.args.get('end', None)
         
         # Load data using DataLoader
+        loader = get_loader()
         df = loader.load(ticker, start=start_date, end=end_date)
         
         # Convert to chart-friendly format
@@ -116,24 +124,20 @@ def health_check():
 @app.route('/api/stocks', methods=['GET'])
 def get_available_stocks():
     """Get list of available stock tickers."""
-    import os
-    from pathlib import Path
-    
-    data_dir = Path("data/raw")
-    if not data_dir.exists():
+    try:
+        # Query the database for all available tickers
+        loader = get_loader()
+        tickers = loader.store.get_all_tickers()
+        
+        return jsonify({
+            'success': True,
+            'tickers': sorted(tickers)
+        })
+    except Exception as e:
         return jsonify({
             'success': False,
-            'error': 'Data directory not found'
-        }), 404
-    
-    # Get all CSV files and extract ticker names
-    csv_files = list(data_dir.glob("*.csv"))
-    tickers = [f.stem.upper() for f in csv_files]
-    
-    return jsonify({
-        'success': True,
-        'tickers': sorted(tickers)
-    })
+            'error': str(e)
+        }), 500
 
 
 @app.route('/api/backtest', methods=['POST'])
@@ -193,13 +197,32 @@ def run_backtest():
         # The strategy_code parameter is accepted but ignored
         # In the future, this could be extended to support custom strategies
         
-        # Run the backtest
-        df = backtester.run_buy_and_hold(
-            ticker=ticker,
-            start=start_date,
-            end=end_date,
-            initial_capital=initial_capital
-        )
+        # Run the backtest - use custom strategy if provided, otherwise Buy & Hold
+        backtester = get_backtester()
+        
+        if strategy_code and strategy_code.strip():
+            try:
+                df = backtester.run_custom_strategy(
+                    ticker=ticker,
+                    start=start_date,
+                    end=end_date,
+                    initial_capital=initial_capital,
+                    strategy_code=strategy_code
+                )
+            except ValueError as e:
+                # If custom strategy fails, return error
+                return jsonify({
+                    'success': False,
+                    'error': f"Custom strategy error: {str(e)}"
+                }), 400
+        else:
+            # Default to Buy & Hold
+            df = backtester.run_buy_and_hold(
+                ticker=ticker,
+                start=start_date,
+                end=end_date,
+                initial_capital=initial_capital
+            )
         
         # Convert DataFrame to results format
         results = []
@@ -311,18 +334,29 @@ def run_comparison_backtest():
             }), 400
         
         # Run backtest for each ticker and store DataFrames for plotting
+        backtester = get_backtester()
         comparison_results = {}
         all_dates = set()
         results_by_ticker_for_plot = {}  # Store DataFrames to reuse for plotting
         
         for ticker in tickers:
             try:
-                df = backtester.run_buy_and_hold(
-                    ticker=ticker,
-                    start=start_date,
-                    end=end_date,
-                    initial_capital=initial_capital
-                )
+                # Run custom strategy if provided, otherwise Buy & Hold
+                if strategy_code and strategy_code.strip():
+                    df = backtester.run_custom_strategy(
+                        ticker=ticker,
+                        start=start_date,
+                        end=end_date,
+                        initial_capital=initial_capital,
+                        strategy_code=strategy_code
+                    )
+                else:
+                    df = backtester.run_buy_and_hold(
+                        ticker=ticker,
+                        start=start_date,
+                        end=end_date,
+                        initial_capital=initial_capital
+                    )
                 
                 # Store DataFrame for plotting
                 results_by_ticker_for_plot[ticker] = df
