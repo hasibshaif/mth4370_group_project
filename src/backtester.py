@@ -460,6 +460,94 @@ class Backtester:
             raise ValueError(f"Unknown strategy: {strategy}")
 
     # ------------------------------------------------------------------
+    # Custom Strategy Execution
+    # ------------------------------------------------------------------
+    def run_custom_strategy(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+        initial_capital: float,
+        strategy_code: str,
+        transaction_cost_pct: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Execute custom user-provided strategy code.
+        
+        The strategy_code should define a function named `strategy` that takes:
+        - df: pd.DataFrame with columns: date, close, price, open, high, low, volume
+        - initial_capital: float
+        
+        And returns:
+        - pd.DataFrame with columns: date, price, shares, cash, portfolio_value, returns_factor
+        
+        Parameters
+        ----------
+        ticker : str
+            Stock symbol
+        start : str
+            Start date (YYYY-MM-DD)
+        end : str
+            End date (YYYY-MM-DD)
+        initial_capital : float
+            Starting capital
+        strategy_code : str
+            Python code defining the strategy function
+        transaction_cost_pct : float
+            Transaction cost percentage
+            
+        Returns
+        -------
+        pd.DataFrame
+            Backtest results with portfolio values over time
+        """
+        # Load data
+        df = self.loader.load(ticker, start=start, end=end)
+        if df.empty:
+            raise ValueError(f"No data available for {ticker} in range {start} to {end}")
+        
+        df["price"] = df["close"]
+        
+        # Create execution environment with necessary imports
+        exec_globals = {
+            'pd': pd,
+            'np': np,
+            'math': math,
+            'df': df.copy(),
+            'initial_capital': initial_capital,
+            'transaction_cost_pct': transaction_cost_pct,
+        }
+        
+        # Execute the user's strategy code
+        try:
+            exec(strategy_code, exec_globals)
+            
+            # Check if strategy function exists
+            if 'strategy' not in exec_globals:
+                raise ValueError("Strategy code must define a function named 'strategy'")
+            
+            # Execute the strategy function
+            strategy_func = exec_globals['strategy']
+            result_df = strategy_func(df.copy(), initial_capital)
+            
+            # Validate result
+            required_cols = ['date', 'price', 'shares', 'cash', 'portfolio_value']
+            missing_cols = [col for col in required_cols if col not in result_df.columns]
+            if missing_cols:
+                raise ValueError(f"Strategy must return DataFrame with columns: {required_cols}. Missing: {missing_cols}")
+            
+            # Add returns_factor if not present
+            if 'returns_factor' not in result_df.columns:
+                result_df['returns_factor'] = result_df['portfolio_value'] / initial_capital
+            
+            return result_df
+            
+        except SyntaxError as e:
+            raise ValueError(f"Syntax error in strategy code: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Error executing strategy: {str(e)}")
+
+    # ------------------------------------------------------------------
     # Visualization
     # ------------------------------------------------------------------
     def plot_results(self, df: pd.DataFrame, ticker: str) -> None:
@@ -508,6 +596,112 @@ class Backtester:
 
         plt.tight_layout()
         plt.show()
+
+    def plot_results_to_base64(self, df: pd.DataFrame, ticker: str) -> str:
+        """
+        Plot portfolio value over time and return as base64 encoded PNG.
+        Used for Flask API responses.
+        """
+        if df.empty:
+            raise ValueError("Cannot plot results: DataFrame is empty.")
+
+        # Compute drawdown series
+        cum_max = df["portfolio_value"].cummax()
+        drawdown = df["portfolio_value"] / cum_max - 1.0
+
+        fig, (ax_equity, ax_dd) = plt.subplots(
+            2, 1, figsize=(10, 7), sharex=True,
+            gridspec_kw={"height_ratios": [3, 1]}
+        )
+
+        # --- Top: equity curve ---
+        ax_equity.plot(df["date"], df["portfolio_value"],
+                       label=f"{ticker} equity curve", linewidth=2, color='#2196F3')
+
+        # Mark entry and exit
+        buy_date = df["date"].iloc[0]
+        sell_date = df["date"].iloc[-1]
+        buy_value = df["portfolio_value"].iloc[0]
+        sell_value = df["portfolio_value"].iloc[-1]
+
+        ax_equity.scatter([buy_date], [buy_value], marker="^", s=100, 
+                         label="Buy", color='green', zorder=5)
+        ax_equity.scatter([sell_date], [sell_value], marker="v", s=100, 
+                         label="Sell", color='red', zorder=5)
+
+        ax_equity.set_title(f"Strategy Equity Curve for {ticker}", fontsize=14, fontweight='bold')
+        ax_equity.set_ylabel("Portfolio Value ($)", fontsize=11)
+        ax_equity.legend(loc='best')
+        ax_equity.grid(True, linestyle="--", alpha=0.3)
+
+        # --- Bottom: drawdown ---
+        ax_dd.fill_between(df["date"], drawdown, 0, alpha=0.3, color='red')
+        ax_dd.plot(df["date"], drawdown, linewidth=1.5, color='darkred')
+        ax_dd.set_ylabel("Drawdown", fontsize=11)
+        ax_dd.set_xlabel("Date", fontsize=11)
+        ax_dd.grid(True, linestyle="--", alpha=0.3)
+        ax_dd.set_ylim(drawdown.min() * 1.05, 0.0)
+
+        plt.tight_layout()
+
+        # Convert to base64
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        buf.close()
+        plt.close(fig)
+
+        return img_base64
+    
+    def plot_comparison_to_base64(self, results_by_ticker: dict) -> str:
+        """
+        Plot normalized equity curves for multiple tickers and return as base64.
+        Used for Flask API responses.
+        """
+        if not results_by_ticker:
+            raise ValueError("No results to plot in plot_comparison_to_base64().")
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        colors = ['#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0', 
+                  '#00BCD4', '#FFC107', '#795548']
+        
+        for idx, (ticker, df) in enumerate(results_by_ticker.items()):
+            if df.empty:
+                continue
+
+            x = df["date"] if "date" in df.columns else df.index
+            y = df["returns_factor"]
+            color = colors[idx % len(colors)]
+
+            ax.plot(x, y, label=ticker, linewidth=2, color=color)
+
+        first_df = next(iter(results_by_ticker.values()))
+        if "date" in first_df.columns:
+            buy_date = first_df["date"].iloc[0]
+            sell_date = first_df["date"].iloc[-1]
+            ax.axvline(buy_date, linestyle="--", alpha=0.3, color='green', linewidth=1)
+            ax.axvline(sell_date, linestyle="--", alpha=0.3, color='red', linewidth=1)
+
+        ax.axhline(1.0, linestyle="--", alpha=0.5, color='gray', linewidth=1)
+        ax.set_title("Strategy Comparison Across Tickers", fontsize=14, fontweight='bold')
+        ax.set_xlabel("Date", fontsize=11)
+        ax.set_ylabel("Normalized Portfolio Value (Initial = 1.0)", fontsize=11)
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, linestyle="--", alpha=0.3)
+        
+        plt.tight_layout()
+
+        # Convert to base64
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        buf.close()
+        plt.close(fig)
+
+        return img_base64
 
     # ------------------------------------------------------------------
     # Performance metrics
